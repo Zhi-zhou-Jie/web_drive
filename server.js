@@ -143,7 +143,7 @@ app.post('/api/upload', requireLogin, upload.array('files', 20), (req, res) => {
     if (!fs.statSync(targetDir).isDirectory()) throw new Error('目标不是目录');
     const saved = [];
     for (const f of req.files) {
-      const name = path.basename(f.originalname).replace(/[\\/:*?"<>|]/g, '_') || 'unnamed';
+      const name = path.basename(f.originalname).replace(/[\\/:*?"'<>|]/g, '_') || 'unnamed';
       let finalPath = path.join(targetDir, name);
       let finalName = name;
       let i = 1;
@@ -191,7 +191,7 @@ app.post('/api/mkdir', requireLogin, (req, res) => {
   try {
     const { path: rel, name } = req.body || {};
     if (!name) return res.status(400).json({ error: '缺少文件夹名' });
-    const clean = name.replace(/[\\/:*?"<>|]/g, '_');
+    const clean = name.replace(/[\\/:*?"'<>|]/g, '_');
     const dir = resolveUserPath(req.session.user.username, (rel || '') + '/' + clean);
     fs.mkdirSync(dir, { recursive: false });
     res.json({ ok: true });
@@ -205,10 +205,13 @@ app.post('/api/rename', requireLogin, (req, res) => {
   try {
     const { path: oldPath, newName } = req.body || {};
     if (!newName) return res.status(400).json({ error: '缺少新名称' });
-    const clean = newName.replace(/[\\/:*?"<>|]/g, '_');
+    const clean = newName.replace(/[\\/:*?"'<>|]/g, '_');
     const src = resolveUserPath(req.session.user.username, oldPath || '');
     const dst = path.join(path.dirname(src), clean);
     if (dst === safeUserDir(req.session.user.username)) throw new Error('非法名称');
+    if (!fs.existsSync(src)) throw new Error('文件或文件夹不存在');
+    if (dst === src) return res.json({ ok: true }); // 名称未变化
+    if (fs.existsSync(dst)) throw new Error('同名文件或文件夹已存在');
     fs.renameSync(src, dst);
     res.json({ ok: true });
   } catch (err) {

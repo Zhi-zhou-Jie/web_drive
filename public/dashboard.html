@@ -79,9 +79,7 @@ function fmtDate(iso) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
+// esc() 已移除 - 改用 DOM API 渲染,无需 HTML 转义
 
 // ---------- 加载与渲染 ----------
 async function loadFiles() {
@@ -130,35 +128,62 @@ function renderFiles(entries, rel) {
   empty.classList.add('hidden');
   dz.classList.remove('empty');
 
-  let html = `
-    <div class="row header">
-      <span>名称</span><span>大小</span><span>修改时间</span><span class="actions-col">操作</span>
-    </div>`;
+  // 用 DOM API 构建列表(DOM 节点 textContent 赋值,文件名内容天然安全,
+  // 不再通过 innerHTML 拼接 onclick 属性,杜绝存储型 XSS)
+  table.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'row header';
+  ['名称', '大小', '修改时间', '操作'].forEach((t, i) => {
+    const th = document.createElement('span');
+    if (i === 3) th.className = 'actions-col';
+    th.textContent = t;
+    header.appendChild(th);
+  });
+  table.appendChild(header);
+
   for (const e of entries) {
     const relPath = rel ? rel + '/' + e.name : e.name;
-    const icon = e.isDir ? '📁' : '📄';
-    const actions = e.isDir
-      ? `<button class="act" title="重命名" onclick="promptRename('${esc(relPath)}','${esc(e.name)}')">✏️</button>
-         <button class="act" title="删除" onclick="delItem('${esc(relPath)}','${esc(e.name)}')">🗑️</button>`
-      : `<button class="act" title="下载" onclick="download('${esc(relPath)}')">⬇️</button>
-         <button class="act" title="重命名" onclick="promptRename('${esc(relPath)}','${esc(e.name)}')">✏️</button>
-         <button class="act" title="删除" onclick="delItem('${esc(relPath)}','${esc(e.name)}')">🗑️</button>`;
-    html += `
-      <div class="row">
-        <span class="name ${e.isDir ? 'dir' : ''}" ${e.isDir ? `onclick="openDir('${esc(relPath)}')"` : ''}>
-          ${icon} ${esc(e.name)}
-        </span>
-        <span>${fmtSize(e.size)}</span>
-        <span>${fmtDate(e.mtime)}</span>
-        <span class="actions-col">${actions}</span>
-      </div>`;
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const name = document.createElement('span');
+    name.className = 'name' + (e.isDir ? ' dir' : '');
+    name.textContent = (e.isDir ? '📁 ' : '📄 ') + e.name;
+    if (e.isDir) name.onclick = () => { currentPath = relPath; loadFiles(); };
+    row.appendChild(name);
+
+    const size = document.createElement('span');
+    size.textContent = fmtSize(e.size);
+    row.appendChild(size);
+
+    const mtime = document.createElement('span');
+    mtime.textContent = fmtDate(e.mtime);
+    row.appendChild(mtime);
+
+    const actions = document.createElement('span');
+    actions.className = 'actions-col';
+    const addBtn = (icon, title, fn) => {
+      const b = document.createElement('button');
+      b.className = 'act';
+      b.title = title;
+      b.textContent = icon;
+      b.onclick = fn;
+      actions.appendChild(b);
+    };
+    if (e.isDir) {
+      addBtn('✏️', '重命名', () => promptRename(relPath, e.name));
+      addBtn('🗑️', '删除', () => delItem(relPath, e.name));
+    } else {
+      addBtn('⬇️', '下载', () => download(relPath));
+      addBtn('✏️', '重命名', () => promptRename(relPath, e.name));
+      addBtn('🗑️', '删除', () => delItem(relPath, e.name));
+    }
+    row.appendChild(actions);
+    table.appendChild(row);
   }
-  table.innerHTML = html;
 }
 
 // ---------- 操作 ----------
-function openDir(p) { currentPath = p; loadFiles(); }
-
 function download(p) { window.location.href = '/api/download?path=' + encodeURIComponent(p); }
 
 async function delItem(p, name) {
