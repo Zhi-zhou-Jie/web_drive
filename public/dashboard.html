@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我的网盘</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">☁️ 我的网盘</div>
+  <div class="user-area">
+    <span id="userName"></span>
+    <button class="btn-ghost" onclick="logout()">退出登录</button>
+  </div>
+</header>
+
+<div class="toolbar">
+  <button class="btn-primary" onclick="document.getElementById('fileInput').click()">⬆ 上传文件</button>
+  <button class="btn" onclick="promptNewFolder()">📁 新建文件夹</button>
+  <div class="breadcrumb" id="breadcrumb"></div>
+</div>
+
+<input type="file" id="fileInput" multiple hidden onchange="uploadFiles(this.files)" />
+
+<div class="drop-zone" id="dropZone">
+  <div class="file-table" id="fileTable"></div>
+  <div class="empty-tip hidden" id="emptyTip">📂 此文件夹为空</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-mask hidden" id="nameModal">
+  <div class="modal">
+    <h3 id="modalTitle">新建文件夹</h3>
+    <input type="text" id="modalInput" placeholder="请输入名称" />
+    <div class="modal-actions">
+      <button class="btn" onclick="hideModal()">取消</button>
+      <button class="btn-primary" onclick="confirmModal()">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentPath = '';
+let currentUser = null;
+let modalCallback = null;
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- 基础 ----------
+async function jfetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('未登录'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { throw new Error(data.error || '请求失败'); }
+  return data;
+}
+
+function toast(text, ok = true) {
+  const t = $('toast');
+  t.textContent = text;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.className = 'toast', 2500);
+}
+
+function fmtSize(bytes) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+  return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------- 加载与渲染 ----------
+async function loadFiles() {
+  try {
+    const data = await jfetch('/api/files?path=' + encodeURIComponent(currentPath));
+    renderFiles(data.entries, data.path);
+  } catch (e) { toast(e.message, false); }
+}
+
+function renderBreadcrumb(rel) {
+  const parts = rel ? rel.split('/').filter(Boolean) : [];
+  const bc = $('breadcrumb');
+  bc.innerHTML = '';
+  const root = document.createElement('span');
+  root.className = 'crumb' + (parts.length === 0 ? ' here' : '');
+  root.textContent = '根目录';
+  root.onclick = () => { currentPath = ''; loadFiles(); };
+  bc.appendChild(root);
+  let acc = '';
+  parts.forEach((p, i) => {
+    const sep = document.createElement('span');
+    sep.className = 'crumb-sep';
+    sep.textContent = ' / ';
+    bc.appendChild(sep);
+    acc = acc ? acc + '/' + p : p;
+    const c = document.createElement('span');
+    c.className = 'crumb' + (i === parts.length - 1 ? ' here' : '');
+    c.textContent = p;
+    if (i < parts.length - 1) c.onclick = () => { currentPath = acc; loadFiles(); };
+    bc.appendChild(c);
+  });
+}
+
+function renderFiles(entries, rel) {
+  renderBreadcrumb(rel);
+  const table = $('fileTable');
+  const empty = $('emptyTip');
+  const dz = $('dropZone');
+
+  if (entries.length === 0) {
+    table.innerHTML = '';
+    empty.classList.remove('hidden');
+    dz.classList.add('empty');
+    return;
+  }
+  empty.classList.add('hidden');
+  dz.classList.remove('empty');
+
+  let html = `
+    <div class="row header">
+      <span>名称</span><span>大小</span><span>修改时间</span><span class="actions-col">操作</span>
+    </div>`;
+  for (const e of entries) {
+    const relPath = rel ? rel + '/' + e.name : e.name;
+    const icon = e.isDir ? '📁' : '📄';
+    const actions = e.isDir
+      ? `<button class="act" title="重命名" onclick="promptRename('${esc(relPath)}','${esc(e.name)}')">✏️</button>
+         <button class="act" title="删除" onclick="delItem('${esc(relPath)}','${esc(e.name)}')">🗑️</button>`
+      : `<button class="act" title="下载" onclick="download('${esc(relPath)}')">⬇️</button>
+         <button class="act" title="重命名" onclick="promptRename('${esc(relPath)}','${esc(e.name)}')">✏️</button>
+         <button class="act" title="删除" onclick="delItem('${esc(relPath)}','${esc(e.name)}')">🗑️</button>`;
+    html += `
+      <div class="row">
+        <span class="name ${e.isDir ? 'dir' : ''}" ${e.isDir ? `onclick="openDir('${esc(relPath)}')"` : ''}>
+          ${icon} ${esc(e.name)}
+        </span>
+        <span>${fmtSize(e.size)}</span>
+        <span>${fmtDate(e.mtime)}</span>
+        <span class="actions-col">${actions}</span>
+      </div>`;
+  }
+  table.innerHTML = html;
+}
+
+// ---------- 操作 ----------
+function openDir(p) { currentPath = p; loadFiles(); }
+
+function download(p) { window.location.href = '/api/download?path=' + encodeURIComponent(p); }
+
+async function delItem(p, name) {
+  if (!confirm(`确定删除「${name}」吗？此操作不可恢复。`)) return;
+  try {
+    await jfetch('/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+    toast('已删除');
+    loadFiles();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function uploadFiles(files) {
+  if (!files || files.length === 0) return;
+  toast('正在上传 ' + files.length + ' 个文件...');
+  const fd = new FormData();
+  fd.append('dir', currentPath);
+  for (const f of files) fd.append('files', f);
+  try {
+    const data = await jfetch('/api/upload', { method: 'POST', body: fd });
+    toast('上传完成: ' + data.saved.join(', '));
+    loadFiles();
+  } catch (e) { toast(e.message, false); }
+  $('fileInput').value = '';
+}
+
+// ---------- 弹窗 ----------
+function showModal(title, callback) {
+  $('modalTitle').textContent = title;
+  $('modalInput').value = '';
+  $('nameModal').classList.remove('hidden');
+  modalCallback = callback;
+  setTimeout(() => $('modalInput').focus(), 50);
+}
+function hideModal() { $('nameModal').classList.add('hidden'); modalCallback = null; }
+async function confirmModal() {
+  const val = $('modalInput').value.trim();
+  if (!val) { toast('名称不能为空', false); return; }
+  const cb = modalCallback;
+  hideModal();
+  if (cb) await cb(val);
+}
+async function promptNewFolder() {
+  showModal('新建文件夹', async (name) => {
+    try {
+      await jfetch('/api/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: currentPath, name }) });
+      toast('已创建');
+      loadFiles();
+    } catch (e) { toast(e.message, false); }
+  });
+}
+function promptRename(p, oldName) {
+  showModal('重命名', async (name) => {
+    try {
+      await jfetch('/api/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p, newName: name }) });
+      toast('已重命名');
+      loadFiles();
+    } catch (e) { toast(e.message, false); }
+  });
+  $('modalInput').value = oldName;
+}
+
+// ---------- 拖拽上传 ----------
+(() => {
+  let counter = 0;
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); counter++; $('dropZone').classList.add('dragging'); });
+  window.addEventListener('dragleave', (e) => { e.preventDefault(); if (--counter <= 0) $('dropZone').classList.remove('dragging'); });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => {
+    e.preventDefault(); counter = 0; $('dropZone').classList.remove('dragging');
+    if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+  });
+})();
+
+// ---------- 初始化 ----------
+async function logout() {
+  await jfetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+async function init() {
+  const me = await jfetch('/api/me');
+  if (!me.username) { window.location.href = '/login'; return; }
+  $('userName').textContent = '👤 ' + me.username;
+  loadFiles();
+}
+init();
+</script>
+</body>
+</html>

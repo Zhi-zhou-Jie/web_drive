@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网盘 - 登录</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="auth-body">
+<div class="auth-container">
+  <h1 class="auth-logo">☁️ 我的网盘</h1>
+  <div class="auth-tabs">
+    <button class="tab-btn active" onclick="switchTab('login')">登录</button>
+    <button class="tab-btn" onclick="switchTab('register')">注册</button>
+  </div>
+
+  <form id="loginForm" class="auth-form" onsubmit="doLogin(event)">
+    <div class="msg" id="loginMsg"></div>
+    <div class="field">
+      <label>用户名</label>
+      <input type="text" name="username" required autocomplete="username" />
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input type="password" name="password" required autocomplete="current-password" />
+    </div>
+    <button type="submit" class="btn-primary">登录</button>
+  </form>
+
+  <form id="registerForm" class="auth-form hidden" onsubmit="doRegister(event)">
+    <div class="msg" id="registerMsg"></div>
+    <div class="field">
+      <label>用户名</label>
+      <input type="text" name="username" required autocomplete="off" />
+      <span class="hint">2-20 位字母/数字/下划线/中文</span>
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input type="password" name="password" required autocomplete="new-password" />
+      <span class="hint">至少 6 位</span>
+    </div>
+    <button type="submit" class="btn-primary">注册</button>
+  </form>
+</div>
+
+<script>
+async function api(url, data) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return res.json();
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.auth-form').forEach(f => f.classList.add('hidden'));
+  document.getElementById(tab + 'Form').classList.remove('hidden');
+  document.querySelector(`.tab-btn[onclick*="${tab}"]`).classList.add('active');
+}
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+}
+
+async function doLogin(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const res = await api('/api/login', Object.fromEntries(fd));
+  if (res.ok) window.location.href = '/dashboard';
+  else showMsg('loginMsg', res.error, false);
+}
+
+async function doRegister(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const res = await api('/api/register', Object.fromEntries(fd));
+  if (res.ok) {
+    showMsg('registerMsg', '注册成功，请登录', true);
+    setTimeout(() => switchTab('login'), 800);
+  } else {
+    showMsg('registerMsg', res.error, false);
+  }
+}
+</script>
+</body>
+</html>
